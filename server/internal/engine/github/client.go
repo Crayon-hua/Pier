@@ -371,6 +371,21 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 
 func (pr *progressReader) render() {
 	if !pr.isTTY {
+		now := time.Now()
+		if now.Sub(pr.lastUpdate) < 2*time.Second && (pr.total <= 0 || pr.current < pr.total) {
+			return
+		}
+		pr.lastUpdate = now
+		elapsed := now.Sub(pr.startTime).Seconds()
+		if elapsed <= 0 {
+			elapsed = 0.001
+		}
+		speed := int64(float64(pr.current-pr.initial) / elapsed)
+		if pr.total > 0 {
+			log.Info(fmt.Sprintf("下载进度 %.1f%% · %s / %s · %s/s", float64(pr.current)*100/float64(pr.total), log.HumanSize(pr.current), log.HumanSize(pr.total), log.HumanSize(speed)))
+		} else {
+			log.Info(fmt.Sprintf("已下载 %s · %s/s", log.HumanSize(pr.current), log.HumanSize(speed)))
+		}
 		return
 	}
 	now := time.Now()

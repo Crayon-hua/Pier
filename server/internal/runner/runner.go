@@ -85,6 +85,7 @@ func Run(ctx context.Context, in Input) error {
 			if in.Project.Repository == "" {
 				return errors.New("请配置 GitHub 仓库，或上传本地部署包")
 			}
+			log.Step(fmt.Sprintf("正在查询 GitHub Release：%s，目标 %s", in.Project.Repository, in.Target))
 			var rel *github.GHRelease
 			if in.Target == "" || in.Target == "latest" {
 				rel, e = github.GetLatest(in.Project.Repository)
@@ -94,6 +95,7 @@ func Run(ctx context.Context, in Input) error {
 			if e != nil {
 				return e
 			}
+			log.Ok("已获取 Release：" + rel.Tag)
 			asset, e := github.FindAsset(rel, in.Project.Asset, in.Project.ID, filepath.Base(in.Project.Repository))
 			if e != nil {
 				return e
@@ -109,6 +111,7 @@ func Run(ctx context.Context, in Input) error {
 			}
 			path = f.Name()
 			f.Close()
+			log.Step(fmt.Sprintf("开始下载 %s（%s）", asset.Name, log.HumanSize(asset.Size)))
 			if e = github.DownloadAsset(in.Project.Repository, asset, path); e != nil {
 				os.Remove(path)
 				return e
@@ -118,14 +121,17 @@ func Run(ctx context.Context, in Input) error {
 					os.Remove(path)
 				}
 			}()
+			log.Ok("下载完成，正在校验部署包名称、类型和版本")
 			if e = validate(path, in.Project, rel.Tag); e != nil {
 				return e
 			}
 		} else {
+			log.Step("正在校验本地部署包")
 			if e = validate(path, in.Project, ""); e != nil {
 				return e
 			}
 		}
+		log.Ok("部署包校验通过，开始安装和激活版本")
 		_, e = deploy.DeployBundle(path, deploy.Options{Root: in.Root, Force: in.Force})
 		return e
 	case "rollback":

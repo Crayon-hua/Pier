@@ -100,7 +100,24 @@ func (s *Service) execute(t store.Task, p store.Project, upload string) {
 		// accidentally cross-contaminate concurrent projects.
 		ctx, cancel := context.WithTimeout(s.ctx, 45*time.Minute)
 		defer cancel()
+		done := make(chan struct{})
+		stopped := make(chan struct{})
+		go func() {
+			defer close(stopped)
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					fmt.Fprintf(f, "[%s] 任务仍在运行，累计耗时 %s；若当前阶段无新增进度，请检查服务器网络或外部命令响应。\n", time.Now().Format(time.RFC3339), time.Since(now).Round(time.Second))
+				}
+			}
+		}()
 		e = s.command(ctx, in, f)
+		close(done)
+		<-stopped
 	}
 	if e != nil {
 		fmt.Fprintf(f, "\n任务未完成：%v\n", e)
