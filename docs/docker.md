@@ -21,19 +21,19 @@ git push origin v1.0.0
 | --- | --- |
 | 正式版本 `v1.0.0` | `v1.0.0`、`1.0.0`、`1.0`、`latest`、`sha-...` |
 | 预发布 `v1.1.0-rc.1` | 对应预发布标签和 `sha-...`，不更新 `latest` |
-| 推送 main / 在 main 手动运行 | `edge`、`sha-...` |
+| 推送 main / 在 main 手动运行 | `latest`、`edge`、`sha-...` |
 | Pull request | 只验证，不登录 Registry、不推送镜像 |
 
-main 构建不会覆盖稳定版 `latest`。生产 Compose 建议固定完整版本。首次没有正式 tag 时，可以在 Actions 手动运行并使用 `:edge`。工作流完成页会列出实际发布的完整镜像名称。
+默认 Compose 使用 `latest`，由 main 构建和正式版本发布更新；预发布 tag 不更新它。需要固定版本时，可改用已发布的完整版本号。首次没有正式 tag 时，也可以在 main 上手动运行 Actions 生成 `latest`。工作流完成页会列出实际发布的完整镜像名称。
 
 ## 3. 使用 Compose
 
-下面假设仓库是 `your-account/pier`，且已成功发布 `v1.0.0`：
+本仓库默认镜像为 `ghcr.io/crayon-hua/pier:latest`，成功完成镜像工作流后即可使用：
 
 ```yaml
 services:
   pier:
-    image: ghcr.io/your-account/pier:v1.0.0
+    image: ghcr.io/crayon-hua/pier:latest
     container_name: pier
     restart: unless-stopped
     networks:
@@ -60,11 +60,11 @@ docker compose up -d
 
 打开 `http://服务器IP:18099`，首次创建管理员，没有默认密码。无需在服务器安装 Go、Node 或 upy。
 
-仓库自带 `compose.yaml`。也可以复制 `.env.example` 为 `.env`，修改 `PIER_IMAGE` 后启动：
+仓库自带 `compose.yaml`，默认即可使用。也可以复制 `.env.example` 为 `.env`，通过 `PIER_IMAGE` 指定其他镜像或固定版本：
 
 ```sh
 cp .env.example .env
-# 编辑 PIER_IMAGE=ghcr.io/你的账号/仓库名:v1.0.0
+# 默认 PIER_IMAGE=ghcr.io/crayon-hua/pier:latest
 docker compose pull
 docker compose up -d
 ```

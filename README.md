@@ -20,9 +20,59 @@
 
 控制台使用真实 API 数据，不预置项目或伪造发布记录。已部署状态代表成功发布的记录，不是持续健康监控。
 
-## 快速启动
+## Docker 部署（推荐）
 
-支持直接通过 Docker 镜像运行，无需安装 Go 或 Node：见 [镜像发布与 Compose 部署](docs/docker.md)。仓库包含 `Dockerfile`、`compose.yaml` 和 `.github/workflows/image.yml`；推送版本 tag 后自动发布多架构镜像。
+默认使用 `ghcr.io/crayon-hua/pier:latest`，无需安装 Go、Node 或 upy。在服务器上保存以下内容为 `compose.yaml`：
+
+```yaml
+services:
+  pier:
+    image: ghcr.io/crayon-hua/pier:latest
+    container_name: pier
+    restart: unless-stopped
+    networks:
+      - whaee-hub
+    ports:
+      - "18099:8099"
+    volumes:
+      - /data/pier:/data/pier
+    environment:
+      TZ: Asia/Shanghai
+    stop_grace_period: 5m
+
+networks:
+  whaee-hub:
+    external: true
+```
+
+启动（已有 `whaee-hub` 网络时跳过创建）：
+
+```sh
+docker network inspect whaee-hub >/dev/null 2>&1 || docker network create whaee-hub
+docker compose pull
+docker compose up -d
+```
+
+访问 `http://服务器IP:18099`，首次创建管理员用户名与密码，没有默认密码。管理员、配置和日志保存在 `/data/pier/state`，部署版本、持久化数据和备份保存在 `/data/pier/apps`，重建容器会保留这些数据。
+
+更新到最新镜像：
+
+```sh
+docker compose pull
+docker compose up -d
+```
+
+`latest` 在 main 分支构建或正式版本发布成功后更新，预发布 tag 不更新它。也可将镜像标签固定为已发布的版本，例如 `:v1.0.0`。镜像首次发布后需在 GitHub Packages 中设为 Public，才能匿名拉取；私有镜像需要先执行 `docker login ghcr.io`。
+
+若要让 Pier 管理宿主机 Docker / Compose 应用，克隆本仓库后使用：
+
+```sh
+docker compose -f compose.yaml -f compose.docker.yaml up -d
+```
+
+覆盖文件会挂载 Docker socket，并配置宿主机健康检查地址。宿主机与容器内的项目路径须保持一致，因此示例使用 `/data/pier:/data/pier`。容器版不管理宿主机 systemd；完整说明见 [镜像发布与 Compose 部署](docs/docker.md)。
+
+## 源码启动与开发
 
 需要 Go 1.26+、Node.js 22.12+。实际服务部署推荐 Linux；macOS 可用于静态/Docker 部署。Windows 可运行控制台和前后端开发，但静态部署需要系统允许创建符号链接，systemd 仅支持 Linux，备份脚本需要 Unix 环境。
 

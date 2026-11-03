@@ -1,6 +1,6 @@
 services:
   pier:
-    image: ${PIER_IMAGE:-ghcr.io/your-github-account/pier:v1.0.0}
+    image: ${PIER_IMAGE:-ghcr.io/crayon-hua/pier:latest}
     container_name: pier
     restart: unless-stopped
     networks:
