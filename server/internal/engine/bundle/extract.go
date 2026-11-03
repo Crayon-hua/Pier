@@ -1,0 +1,93 @@
+// 安全解压 ZIP, 防 ZIP Slip (每个文件 resolve 后必须仍在目标目录内, 禁止 ../)
+package bundle
+
+import (
+	"archive/zip"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"pier/internal/engine/i18n"
+)
+
+// SafeExtract 解压 zipPath 到 destDir, 逐条校验路径防 ZIP Slip
+func SafeExtract(zipPath, destDir string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return fmt.Errorf(i18n.T("无法读取压缩包: %s (%v)"), zipPath, err)
+	}
+	defer r.Close()
+
+	absDest, err := filepath.Abs(destDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(absDest, 0o755); err != nil {
+		return err
+	}
+
+	if len(r.File) > 50000 {
+		return fmt.Errorf("archive has too many entries")
+	}
+	var total uint64
+	for _, f := range r.File {
+		if f.UncompressedSize64 > 1<<30 || total > (1<<30)-f.UncompressedSize64 {
+			return fmt.Errorf("archive expands beyond 1 GiB")
+		}
+		total += f.UncompressedSize64
+	}
+	for _, f := range r.File {
+		name := f.Name
+		if strings.ContainsAny(name, "\\:") || strings.HasPrefix(name, "/") {
+			return fmt.Errorf("unsafe archive path")
+		}
+		absPath := filepath.Join(absDest, filepath.FromSlash(name))
+		rel, err := filepath.Rel(absDest, absPath)
+		if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+			return fmt.Errorf(i18n.T("检测到 zip slip 攻击: 条目 '%s' 试图逃逸目标目录，已拒绝"), name)
+		}
+		// 进一步: 任意路径段为 ".." 也拒绝
+		for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+			if seg == ".." {
+				return fmt.Errorf(i18n.T("检测到 zip slip 攻击: 条目 '%s' 试图逃逸目标目录，已拒绝"), name)
+			}
+		}
+
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(absPath, 0o755); err != nil {
+				return err
+			}
+			_ = os.Chmod(absPath, 0o755)
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+			return err
+		}
+		_ = os.Chmod(filepath.Dir(absPath), 0o755)
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		mode := f.Mode()
+		filePerm := os.FileMode(0o644)
+		if mode&0o111 != 0 {
+			filePerm = 0o755
+		}
+		out, err := os.OpenFile(absPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, filePerm)
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		if _, err := io.Copy(out, rc); err != nil {
+			rc.Close()
+			out.Close()
+			return err
+		}
+		rc.Close()
+		out.Close()
+		_ = os.Chmod(absPath, filePerm)
+	}
+	return nil
+}

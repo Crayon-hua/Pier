@@ -1,0 +1,120 @@
+name: Publish container image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pier-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Test server
+        working-directory: server
+        run: go test ./...
+      - name: Vet server
+        working-directory: server
+        run: go vet ./...
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Resolve image names
+        id: names
+        env:
+          REPOSITORY: ${{ github.repository }}
+          HUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          HUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+        shell: bash
+        run: |
+          echo "ghcr=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          if [ -n "$HUB_USERNAME" ]; then
+            echo "hub=${HUB_IMAGE:-$HUB_USERNAME/pier}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - name: Build image for smoke test
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: pier:smoke
+          cache-from: type=gha,scope=pier-image
+          cache-to: type=gha,mode=max,scope=pier-image
+      - name: Verify image startup, deployment and persistence
+        run: node scripts/docker-smoke.mjs pier:smoke
+      - name: Extract image tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            ${{ steps.names.outputs.ghcr }}
+            ${{ steps.names.outputs.hub }}
+          flavor: latest=auto
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=edge,branch=main
+            type=ref,event=pr
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=Pier
+            org.opencontainers.image.description=Lightweight single-host deployment console
+      - name: Sign in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Sign in to Docker Hub (optional)
+        if: github.event_name != 'pull_request' && vars.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish amd64 and arm64 images
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=pier-image
+          cache-to: type=gha,mode=max,scope=pier-image
+      - name: Write published image names
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        shell: bash
+        run: |
+          printf '## Published images\n\n```text\n%s\n```\n' "$IMAGE_TAGS" >> "$GITHUB_STEP_SUMMARY"

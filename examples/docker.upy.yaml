@@ -1,0 +1,9 @@
+name: my-api
+version: v1.0.0
+type: docker
+docker:
+  mode: compose
+  composeFile: docker-compose.yml
+healthcheck:
+  url: http://127.0.0.1:3000/health
+  timeout: 60s

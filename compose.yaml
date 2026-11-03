@@ -1,0 +1,19 @@
+services:
+  pier:
+    image: ${PIER_IMAGE:-ghcr.io/your-github-account/pier:v1.0.0}
+    container_name: pier
+    restart: unless-stopped
+    networks:
+      - whaee-hub
+    ports:
+      - "18099:8099"
+    volumes:
+      # Keep identical absolute paths for host Docker bind mounts.
+      - /data/pier:/data/pier
+    environment:
+      TZ: Asia/Shanghai
+    stop_grace_period: 5m
+
+networks:
+  whaee-hub:
+    external: true

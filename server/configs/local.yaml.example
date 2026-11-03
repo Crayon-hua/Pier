@@ -1,0 +1,7 @@
+listen: 127.0.0.1:8099
+data_dir: ./data
+projects_dir: ./apps
+web_dir: ../web/dist
+# HTTPS reverse proxy deployments should set this to true.
+secure_cookie: false
+max_upload_mb: 256

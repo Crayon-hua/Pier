@@ -1,0 +1,11 @@
+server/data/
+server/apps/
+server/bin/
+server/configs/local.yaml
+web/node_modules/
+web/dist/
+server/internal/webembed/dist/*
+!server/internal/webembed/dist/.keep
+*.log
+.env
+examples/*.zip

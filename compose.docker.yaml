@@ -1,0 +1,8 @@
+# Optional: manage applications using the host's Docker Engine.
+# docker compose -f compose.yaml -f compose.docker.yaml up -d
+services:
+  pier:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -1,0 +1,11 @@
+name: my-api
+version: v1.0.0
+type: system
+target:
+  os: linux
+  arch: amd64
+system:
+  command: ["./my-api", "--port", "3000"]
+healthcheck:
+  url: http://127.0.0.1:3000/health
+  timeout: 30s

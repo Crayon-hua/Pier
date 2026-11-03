@@ -1,0 +1,71 @@
+// 项目信息横幅: release/bundle 开始时打印 项目名/目录/类型/当前版本 (彩色 + emoji)
+package ui
+
+import (
+	"os"
+	"strings"
+
+	"pier/internal/engine/config"
+	"pier/internal/engine/i18n"
+	"pier/internal/engine/log"
+	"pier/internal/engine/state"
+)
+
+// BannerOptions 横幅选项
+type BannerOptions struct {
+	Type    string // 部署类型描述, 如 "Docker 容器 (container)"
+	ZipPath string // bundle 模式: 传入 zip 路径推断类型
+}
+
+// DescribeType 描述部署类型
+func DescribeType(m *config.Manifest) string {
+	if m.Type == "static" {
+		return i18n.T("静态站点 (static)")
+	}
+	if m.Type == "docker" {
+		mode := "container"
+		if m.Docker != nil && m.Docker.Mode == "compose" {
+			mode = "compose"
+		}
+		label := i18n.T("Docker 容器")
+		if mode == "compose" {
+			label = "Docker Compose"
+		}
+		return label + " (" + mode + ")"
+	}
+	return m.Type
+}
+
+// PrintProjectBanner 打印项目横幅
+func PrintProjectBanner(root string, opts BannerOptions) {
+	name := i18n.T("未知项目")
+	if cfg, err := config.ReadProjectConfig(root); err == nil && cfg.Name != "" {
+		name = cfg.Name
+	}
+
+	bannerType := opts.Type
+	if bannerType == "" && opts.ZipPath != "" {
+		if t := manifestTypeFromZip(opts.ZipPath); t != "" {
+			bannerType = t
+		}
+	}
+
+	current := i18n.T("未部署")
+	if st, err := state.Read(root); err == nil && st.CurrentVersion != "" {
+		current = st.CurrentVersion
+	}
+
+	line := log.Cyan(strings.Repeat("━", 44))
+	os.Stderr.WriteString(line + "\n")
+	os.Stderr.WriteString(i18n.T("  📦 项目: ") + log.Green(log.Bold(name)) + "\n")
+	os.Stderr.WriteString(i18n.T("  📁 目录: ") + log.Path(root) + "\n")
+	if bannerType != "" {
+		os.Stderr.WriteString(i18n.T("  🧩 类型: ") + log.Sky(bannerType) + "\n")
+	}
+	if current == i18n.T("未部署") {
+		os.Stderr.WriteString(i18n.T("  🏷 当前版本: ") + log.Yellow(current) + "\n")
+	} else {
+		os.Stderr.WriteString(i18n.T("  🏷 当前版本: ") + log.Green(current) + "\n")
+	}
+	os.Stderr.WriteString(line + "\n")
+}

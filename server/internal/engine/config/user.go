@@ -1,0 +1,643 @@
+// 用户级配置: ~/.upy/config.yaml (兼容 ~/.uply/config.yaml)
+// 放 Bark / webhook 这类跨项目通知渠道, 以及多组织 GitHub token
+package config
+
+import (
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"pier/internal/engine/i18n"
+	"gopkg.in/yaml.v3"
+)
+
+// UserBark 一条 Bark 推送配置。支持多条, 失败/成功会逐条发送。
+type UserBark struct {
+	Name      string `yaml:"name"`
+	ServerURL string `yaml:"serverUrl"` // 如 https://api.day.app
+	Token     string `yaml:"token"`
+	DeviceKey string `yaml:"deviceKey"` // 兼容字段, 与 token 二选一
+	Group     string `yaml:"group"`
+	Sound     string `yaml:"sound"`
+	Icon      string `yaml:"icon"`
+	Level     string `yaml:"level"`
+	Enabled   *bool  `yaml:"enabled,omitempty"`
+}
+
+// BarkChannels 支持单人、多人列表、对象映射等多种 YAML 配置形态的 Bark 渠道切片
+type BarkChannels []UserBark
+
+// UnmarshalYAML 灵活解析 Bark 渠道: 支持纯 token 字符串、字符串列表、对象列表以及带 tokens 数组的对象
+func (bc *BarkChannels) UnmarshalYAML(value *yaml.Node) error {
+	var list []UserBark
+	switch value.Kind {
+	case yaml.ScalarNode:
+		if val := strings.TrimSpace(value.Value); val != "" {
+			list = append(list, UserBark{Token: val})
+		}
+	case yaml.SequenceNode:
+		for _, child := range value.Content {
+			if child.Kind == yaml.ScalarNode {
+				if val := strings.TrimSpace(child.Value); val != "" {
+					list = append(list, UserBark{Token: val})
+				}
+			} else if child.Kind == yaml.MappingNode {
+				var item UserBark
+				if err := child.Decode(&item); err == nil {
+					list = append(list, item)
+				}
+			}
+		}
+	case yaml.MappingNode:
+		var helper struct {
+			Name       string     `yaml:"name"`
+			ServerURL  string     `yaml:"serverUrl"`
+			Token      string     `yaml:"token"`
+			DeviceKey  string     `yaml:"deviceKey"`
+			Tokens     []string   `yaml:"tokens"`
+			Keys       []string   `yaml:"keys"`
+			Users      []UserBark `yaml:"users"`
+			Recipients []UserBark `yaml:"recipients"`
+			Group      string     `yaml:"group"`
+			Sound      string     `yaml:"sound"`
+			Icon       string     `yaml:"icon"`
+			Level      string     `yaml:"level"`
+			Enabled    *bool      `yaml:"enabled"`
+		}
+		if err := value.Decode(&helper); err == nil {
+			userList := append(helper.Users, helper.Recipients...)
+			if len(userList) > 0 {
+				for _, u := range userList {
+					merged := UserBark{
+						Name:      u.Name,
+						ServerURL: u.ServerURL,
+						Token:     u.Token,
+						DeviceKey: u.DeviceKey,
+						Group:     u.Group,
+						Sound:     u.Sound,
+						Icon:      u.Icon,
+						Level:     u.Level,
+						Enabled:   u.Enabled,
+					}
+					// 用户级未定义时，回退继承通用字段（用户级字段优先级高于通用字段）
+					if strings.TrimSpace(merged.ServerURL) == "" {
+						merged.ServerURL = helper.ServerURL
+					}
+					if strings.TrimSpace(merged.Group) == "" {
+						merged.Group = helper.Group
+					}
+					if strings.TrimSpace(merged.Sound) == "" {
+						merged.Sound = helper.Sound
+					}
+					if strings.TrimSpace(merged.Icon) == "" {
+						merged.Icon = helper.Icon
+					}
+					if strings.TrimSpace(merged.Level) == "" {
+						merged.Level = helper.Level
+					}
+					if merged.Enabled == nil {
+						merged.Enabled = helper.Enabled
+					}
+					if strings.TrimSpace(merged.Name) == "" {
+						merged.Name = helper.Name
+					}
+					list = append(list, merged)
+				}
+			} else if len(helper.Tokens) > 0 || len(helper.Keys) > 0 {
+				allKeys := append(helper.Tokens, helper.Keys...)
+				for _, k := range allKeys {
+					if strings.TrimSpace(k) != "" {
+						list = append(list, UserBark{
+							Name:      helper.Name,
+							ServerURL: helper.ServerURL,
+							Token:     strings.TrimSpace(k),
+							Group:     helper.Group,
+							Sound:     helper.Sound,
+							Icon:      helper.Icon,
+							Level:     helper.Level,
+							Enabled:   helper.Enabled,
+						})
+					}
+				}
+			} else if helper.Token != "" || helper.DeviceKey != "" {
+				list = append(list, UserBark{
+					Name:      helper.Name,
+					ServerURL: helper.ServerURL,
+					Token:     helper.Token,
+					DeviceKey: helper.DeviceKey,
+					Group:     helper.Group,
+					Sound:     helper.Sound,
+					Icon:      helper.Icon,
+					Level:     helper.Level,
+					Enabled:   helper.Enabled,
+				})
+			}
+		}
+	}
+	*bc = list
+	return nil
+}
+
+// Active 过滤并返回当前启用的有效 Bark 渠道
+func (bc BarkChannels) Active() []UserBark {
+	out := make([]UserBark, 0, len(bc))
+	for _, b := range bc {
+		if b.active() {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// NotifyConfig 通知总开关及渠道配置。
+type NotifyConfig struct {
+	Enabled *bool           `yaml:"enabled,omitempty"`
+	Bark    BarkChannels    `yaml:"bark,omitempty"`
+	Webhook WebhookChannels `yaml:"webhook,omitempty"`
+}
+
+// ActiveBarks 返回当前生效的 Bark 渠道列表
+func (n *NotifyConfig) ActiveBarks() []UserBark {
+	if n == nil || (n.Enabled != nil && !*n.Enabled) {
+		return nil
+	}
+	return n.Bark.Active()
+}
+
+// ActiveWebhooks 返回当前生效的项目 Webhook 渠道列表
+func (n *NotifyConfig) ActiveWebhooks() []ProjectWebhook {
+	if n == nil || (n.Enabled != nil && !*n.Enabled) {
+		return nil
+	}
+	return n.Webhook.Active()
+}
+
+// UserNotify 用户级通知配置别名
+type UserNotify = NotifyConfig
+
+// ProjectNotify 项目级通知配置别名
+type ProjectNotify = NotifyConfig
+
+// UserGitHub GitHub 访问配置。支持单 token 及按组织/个人归属的多 token。
+type UserGitHub struct {
+	Token  string            `yaml:"token,omitempty"`  // 默认 / 兜底 token
+	Tokens map[string]string `yaml:"tokens,omitempty"` // 按归属映射: WeiaiHealth-Software: ghp_xxx
+}
+
+// UpdateConfig 仅控制 upy 自身升级，不影响项目 Release 下载及系统网络代理。
+type UpdateConfig struct {
+	ProxyEnabled bool `yaml:"proxy_enabled,omitempty"`
+}
+
+// UserConfig ~/.upy/config.yaml
+type UserConfig struct {
+	Language string         `yaml:"language,omitempty"`
+	Update   UpdateConfig   `yaml:"update,omitempty"`
+	GitHub   UserGitHub     `yaml:"github"`
+	Notify   UserNotify     `yaml:"notify,omitempty"`
+	Projects []LocalProject `yaml:"projects,omitempty"`
+	Server   ServerConfig   `yaml:"server,omitempty"`
+}
+
+// ServerConfig ~/.upy/config.yaml 中的 server 模块全局配置
+type ServerConfig struct {
+	Listen        string `yaml:"listen,omitempty"`          // 监听地址，如 :8999 或 127.0.0.1:8999
+	Token         string `yaml:"token,omitempty"`           // 全局 API Bearer Token
+	PublicURL     string `yaml:"public_url,omitempty"`      // 对外生成日志访问链接的 Base URL
+	MaxLogHistory int    `yaml:"max_log_history,omitempty"` // 每个项目保留的最大日志文件数，默认 30
+	TOTPMaxViews  int    `yaml:"totp_max_views,omitempty"`  // 2FA 绑定二维码最大展示次数，默认 5
+	TOTPSecret    string `yaml:"totp_secret,omitempty"`     // 可选显式固定 TOTP Secret (Base32)
+}
+
+// EffectiveListen 返回生效的监听地址，缺省为 127.0.0.1:8999
+func (s ServerConfig) EffectiveListen() string {
+	if strings.TrimSpace(s.Listen) != "" {
+		return strings.TrimSpace(s.Listen)
+	}
+	return "127.0.0.1:8999"
+}
+
+// EffectiveMaxLogHistory 返回生效的最大历史日志保留数，缺省为 30
+func (s ServerConfig) EffectiveMaxLogHistory() int {
+	if s.MaxLogHistory > 0 {
+		return s.MaxLogHistory
+	}
+	return 30
+}
+
+// EffectiveTOTPMaxViews 返回生效的 2FA 绑定二维码最大展示次数，默认 5
+func (s ServerConfig) EffectiveTOTPMaxViews() int {
+	if s.TOTPMaxViews > 0 {
+		return s.TOTPMaxViews
+	}
+	return 5
+}
+
+// ActiveBarks 返回全局用户配置中生效的 Bark 渠道
+func (c *UserConfig) ActiveBarks() []UserBark {
+	if c == nil {
+		return nil
+	}
+	return c.Notify.ActiveBarks()
+}
+
+// LocalProject 一台机器上曾成功部署过的项目。Name 在注册表中唯一。
+type LocalProject struct {
+	Name string `yaml:"name"`
+	Root string `yaml:"root"`
+}
+
+func (b UserBark) active() bool {
+	if b.Enabled != nil && !*b.Enabled {
+		return false
+	}
+	return strings.TrimSpace(b.Key()) != ""
+}
+
+// Key 返回 Bark device key / token，兼容纯 token、以斜杠分隔或完整 Bark 推送 URL
+func (b UserBark) Key() string {
+	raw := strings.TrimSpace(b.Token)
+	if raw == "" {
+		raw = strings.TrimSpace(b.DeviceKey)
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		if u, err := url.Parse(raw); err == nil {
+			keyPath := strings.Trim(u.Path, "/")
+			if b.ServerURL != "" {
+				if su, err := url.Parse(b.ServerURL); err == nil {
+					basePath := strings.Trim(su.Path, "/")
+					if basePath != "" && strings.HasPrefix(keyPath, basePath) {
+						keyPath = strings.TrimPrefix(keyPath, basePath)
+						keyPath = strings.Trim(keyPath, "/")
+					}
+				}
+			}
+			return keyPath
+		}
+	}
+	return raw
+}
+
+// Endpoint 规范化 Bark 服务地址, 去掉末尾斜杠，支持从 full URL token 中自动提取
+func (b UserBark) Endpoint() string {
+	s := strings.TrimSpace(b.ServerURL)
+	if s == "" {
+		raw := strings.TrimSpace(b.Token)
+		if raw == "" {
+			raw = strings.TrimSpace(b.DeviceKey)
+		}
+		if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+			if u, err := url.Parse(raw); err == nil && u.Scheme != "" && u.Host != "" {
+				return fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+			}
+		}
+		s = "https://api.day.app"
+	}
+	return strings.TrimRight(s, "/")
+}
+
+// Label 日志里用的短名
+func (b UserBark) Label() string {
+	if n := strings.TrimSpace(b.Name); n != "" {
+		return n
+	}
+	return "bark"
+}
+
+// UserDataDir 返回数据与运行时文件目录 (~/.upy 或根据 UPY_CONFIG 的父目录)
+func UserDataDir() string {
+	if p := strings.TrimSpace(os.Getenv("UPY_CONFIG")); p != "" {
+		return filepath.Dir(p)
+	}
+	if p := strings.TrimSpace(os.Getenv("UPLY_CONFIG")); p != "" {
+		return filepath.Dir(p)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ".upy"
+	}
+	return filepath.Join(home, ".upy")
+}
+
+// DefaultUserConfigPath 默认用户配置保存路径: ~/.upy/config.yaml
+func DefaultUserConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ".upy/config.yaml"
+	}
+	return filepath.Join(home, ".upy", "config.yaml")
+}
+
+// UserConfigPath 返回当前生效的配置文件路径。优先 UPY_CONFIG，兜底 UPLY_CONFIG。
+func UserConfigPath() string {
+	if p := strings.TrimSpace(os.Getenv("UPY_CONFIG")); p != "" {
+		return p
+	}
+	if p := strings.TrimSpace(os.Getenv("UPLY_CONFIG")); p != "" {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	// 若 ~/.upy/config.yaml 不存在但 ~/.uply/config.yaml 存在，自动兼容旧路径
+	newPath := filepath.Join(home, ".upy", "config.yaml")
+	if _, err := os.Stat(newPath); err == nil {
+		return newPath
+	}
+	oldPath := filepath.Join(home, ".uply", "config.yaml")
+	if _, err := os.Stat(oldPath); err == nil {
+		return oldPath
+	}
+	return newPath
+}
+
+// LoadUserConfig 读取用户配置。文件不存在时返回空配置, 不报错。
+func LoadUserConfig() (*UserConfig, error) {
+	path := UserConfigPath()
+	if path == "" {
+		return &UserConfig{}, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &UserConfig{}, nil
+		}
+		return nil, fmt.Errorf(i18n.T("读取用户配置失败: %s (%v)"), path, err)
+	}
+	var cfg UserConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf(i18n.T("用户配置 YAML 无效: %s (%v)"), path, err)
+	}
+	return &cfg, nil
+}
+
+// GitHubToken 返回配置文件里的默认 GitHub token
+func (c *UserConfig) GitHubToken() string {
+	if c == nil {
+		return ""
+	}
+	if t := strings.TrimSpace(c.GitHub.Token); t != "" {
+		return t
+	}
+	if len(c.GitHub.Tokens) > 0 {
+		if t, ok := c.GitHub.Tokens["default"]; ok && strings.TrimSpace(t) != "" {
+			return strings.TrimSpace(t)
+		}
+	}
+	return ""
+}
+
+// GitHubTokenForOwner 按组织名/用户名精确或大小写不敏感匹配 token，未匹配时回退到默认 token
+func (c *UserConfig) GitHubTokenForOwner(owner string) string {
+	if c == nil {
+		return ""
+	}
+	owner = strings.TrimSpace(owner)
+	if owner != "" && len(c.GitHub.Tokens) > 0 {
+		for k, v := range c.GitHub.Tokens {
+			if strings.EqualFold(k, owner) && strings.TrimSpace(v) != "" {
+				return strings.TrimSpace(v)
+			}
+		}
+	}
+	return c.GitHubToken()
+}
+
+// ParseRepoOwner 辅助函数: 从 owner/repo 或 owner 中提取 owner
+func ParseRepoOwner(repo string) string {
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return ""
+	}
+	parts := strings.Split(repo, "/")
+	return strings.TrimSpace(parts[0])
+}
+
+// LookupGitHubTokenForRepo 针对特定 repo/owner 查找 token:
+// 1. 配置文件匹配 owner 的 tokens[owner]
+// 2. 配置文件兜底默认 token
+// 3. 环境变量 DEPLOY_GITHUB_TOKEN
+func LookupGitHubTokenForRepo(repo string) (string, error) {
+	cfg, err := LoadUserConfig()
+	if err != nil {
+		return "", err
+	}
+	owner := ParseRepoOwner(repo)
+	if t := cfg.GitHubTokenForOwner(owner); t != "" {
+		return t, nil
+	}
+	return strings.TrimSpace(os.Getenv("DEPLOY_GITHUB_TOKEN")), nil
+}
+
+// ResolveGitHubTokenForRepo 针对特定 repo/owner 取 token，均未配置时返回可操作错误提示
+func ResolveGitHubTokenForRepo(repo string) (string, error) {
+	t, err := LookupGitHubTokenForRepo(repo)
+	if err != nil {
+		return "", err
+	}
+	if t == "" {
+		path := UserConfigPath()
+		if path == "" {
+			path = "~/.upy/config.yaml"
+		}
+		owner := ParseRepoOwner(repo)
+		if owner != "" {
+			return "", fmt.Errorf(i18n.T("未配置访问 %s 的 GitHub token。请在 %s 写入 github.tokens.%s，或通过 upy init %s <token> 添加。"), owner, path, owner, owner)
+		}
+		return "", fmt.Errorf(i18n.T("未配置 GitHub token。请在 %s 写入 github.token，或通过 upy init <token> 添加。"), path)
+	}
+	return t, nil
+}
+
+// LookupGitHubToken (兼容保留) 查询默认全局 token
+func LookupGitHubToken() (string, error) {
+	return LookupGitHubTokenForRepo("")
+}
+
+// ResolveGitHubToken (兼容保留) 获取默认全局 token
+func ResolveGitHubToken() (string, error) {
+	return ResolveGitHubTokenForRepo("")
+}
+
+// SaveGitHubToken 保存/更新 GitHub Token。owner 为空或 "default" 时保存为默认全局 token
+func SaveGitHubToken(owner, token string) (string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", i18n.Error("token 不能为空")
+	}
+
+	path := UserConfigPath()
+	if path == "" {
+		path = DefaultUserConfigPath()
+	}
+
+	cfg, err := LoadUserConfig()
+	if err != nil {
+		cfg = &UserConfig{}
+	}
+
+	owner = strings.TrimSpace(owner)
+	if owner == "" || strings.EqualFold(owner, "default") {
+		cfg.GitHub.Token = token
+	} else {
+		if cfg.GitHub.Tokens == nil {
+			cfg.GitHub.Tokens = make(map[string]string)
+		}
+		cfg.GitHub.Tokens[owner] = token
+	}
+
+	return saveUserConfig(cfg)
+}
+
+// ListLocalProjects 返回可用的本地项目。根目录丢失、不是目录或缺少 deploy.yaml 的记录会被自动清理。
+func ListLocalProjects() ([]LocalProject, error) {
+	cfg, err := LoadUserConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	projects := make([]LocalProject, 0, len(cfg.Projects))
+	seen := make(map[string]bool, len(cfg.Projects))
+	changed := false
+	for _, project := range cfg.Projects {
+		name := strings.TrimSpace(project.Name)
+		root := strings.TrimSpace(project.Root)
+		if name == "" || root == "" {
+			changed = true
+			continue
+		}
+		absRoot, err := filepath.Abs(root)
+		if err != nil || !isProjectRoot(absRoot) || seen[name] {
+			changed = true
+			continue
+		}
+		if absRoot != project.Root || name != project.Name {
+			changed = true
+		}
+		seen[name] = true
+		projects = append(projects, LocalProject{Name: name, Root: absRoot})
+	}
+
+	if changed {
+		cfg.Projects = projects
+		if _, err := saveUserConfig(cfg); err != nil {
+			return nil, err
+		}
+	}
+	return projects, nil
+}
+
+// SaveLocalProject 在 release 成功后保存项目名称及绝对根目录。同名或同根目录旧记录会被替换。
+func SaveLocalProject(name, root string) error {
+	name = strings.TrimSpace(name)
+	root = strings.TrimSpace(root)
+	absRoot, err := filepath.Abs(root)
+	if err != nil || name == "" || !isProjectRoot(absRoot) {
+		return i18n.Error("项目名称或根目录无效，无法保存本地项目")
+	}
+
+	cfg, err := LoadUserConfig()
+	if err != nil {
+		return err
+	}
+	projects, err := ListLocalProjects()
+	if err != nil {
+		return err
+	}
+	cfg.Projects = append([]LocalProject{{Name: name, Root: absRoot}}, filterDifferentProject(projects, name, absRoot)...)
+	_, err = saveUserConfig(cfg)
+	return err
+}
+
+// UnregisterLocalProject 从已注册本地项目列表中移除匹配 name 或 root 的记录
+func UnregisterLocalProject(name, root string) error {
+	name = strings.TrimSpace(name)
+	root = strings.TrimSpace(root)
+	if name == "" && root == "" {
+		return nil
+	}
+	var absRoot string
+	if root != "" {
+		if abs, err := filepath.Abs(root); err == nil {
+			absRoot = abs
+		}
+	}
+
+	cfg, err := LoadUserConfig()
+	if err != nil {
+		return err
+	}
+
+	filtered := make([]LocalProject, 0, len(cfg.Projects))
+	changed := false
+	for _, p := range cfg.Projects {
+		matchName := name != "" && p.Name == name
+		matchRoot := absRoot != "" && p.Root == absRoot
+		if matchName || matchRoot {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+
+	if changed {
+		cfg.Projects = filtered
+		_, err = saveUserConfig(cfg)
+		return err
+	}
+	return nil
+}
+
+func filterDifferentProject(projects []LocalProject, name, root string) []LocalProject {
+	filtered := make([]LocalProject, 0, len(projects))
+	for _, project := range projects {
+		if project.Name != name && project.Root != root {
+			filtered = append(filtered, project)
+		}
+	}
+	return filtered
+}
+
+func isProjectRoot(root string) bool {
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	manifest, err := os.Stat(filepath.Join(root, "deploy.yaml"))
+	return err == nil && manifest.Mode().IsRegular()
+}
+
+func saveUserConfig(cfg *UserConfig) (string, error) {
+	path := UserConfigPath()
+	if path == "" {
+		path = DefaultUserConfigPath()
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return "", fmt.Errorf(i18n.T("无法创建配置目录 %s: %v"), filepath.Dir(path), err)
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return "", fmt.Errorf(i18n.T("序列化配置失败: %v"), err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return "", fmt.Errorf(i18n.T("写入配置文件失败 %s: %v"), path, err)
+	}
+	return path, nil
+}
+
+// SaveLanguage persists only a supported canonical language, preserving the rest of the configuration.
+func SaveLanguage(language string) (string, error) {
+	language, err := i18n.Normalize(language)
+	if err != nil {
+		return "", err
+	}
+	cfg, err := LoadUserConfig()
+	if err != nil {
+		return "", err
+	}
+	cfg.Language = language
+	return saveUserConfig(cfg)
+}

@@ -1,0 +1,17 @@
+.git
+.github
+**/node_modules
+web/dist
+server/bin
+server/data
+server/apps
+server/internal/webembed/dist
+server/configs/local.yaml
+**/*.exe
+**/*.exe~
+**/*.log
+**/.env
+**/.env.*
+docs
+examples
+scripts

@@ -1,0 +1,5 @@
+name: hello-pier
+version: v1.0.0
+type: static
+static:
+  directory: dist

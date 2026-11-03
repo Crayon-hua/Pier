@@ -1,0 +1,330 @@
+// 部署通知: 用户家目录配置里的 Bark 渠道
+// 通知失败只记警告, 不改变部署结果。
+package notify
+
+import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"pier/internal/engine/config"
+	"pier/internal/engine/log"
+)
+
+// Kind 通知类型
+type Kind string
+
+const (
+	KindSuccess       Kind = "success"
+	KindFailure       Kind = "failure"
+	KindBackupSuccess Kind = "backup_success"
+	KindBackupFailure Kind = "backup_failure"
+)
+
+// Event 一次部署通知
+type Event struct {
+	Kind    Kind
+	Project string
+	Version string
+	Root    string
+	Type    string
+	Mode    string
+	Elapsed string
+	Error   string
+}
+
+// WebhookPayload 推送给外部 Webhook 的标准化 JSON 载荷
+type WebhookPayload struct {
+	Event     string `json:"event"`
+	Action    string `json:"action"`
+	Status    string `json:"status"`
+	Project   string `json:"project"`
+	Version   string `json:"version,omitempty"`
+	Type      string `json:"type,omitempty"`
+	Root      string `json:"root"`
+	Elapsed   string `json:"elapsed,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Timestamp int64  `json:"timestamp"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+}
+
+var httpClient = &http.Client{Timeout: 8 * time.Second}
+
+func nlJoin(parts []string) string {
+	return strings.Join(parts, string(rune(10)))
+}
+
+// Send 按用户及项目配置发送通知 (Bark 及项目级 Webhook)。未配置渠道时静默返回。
+func Send(evt Event) {
+	var projectBarks []config.UserBark
+	var projectWebhooks []config.ProjectWebhook
+	projectDisabled := false
+
+	root := strings.TrimSpace(evt.Root)
+	if root != "" {
+		if pcfg, err := config.ReadProjectConfig(root); err == nil && pcfg != nil {
+			if strings.TrimSpace(evt.Project) == "" && pcfg.Name != "" {
+				evt.Project = pcfg.Name
+			}
+			if pcfg.Notify != nil && pcfg.Notify.Enabled != nil && !*pcfg.Notify.Enabled {
+				projectDisabled = true
+			} else {
+				projectBarks = pcfg.ActiveBarks()
+				projectWebhooks = pcfg.ActiveWebhooks()
+			}
+		}
+	}
+
+	if projectDisabled {
+		return
+	}
+
+	var userBarks []config.UserBark
+	userCfg, err := config.LoadUserConfig()
+	if err != nil {
+		log.Warn("读取用户通知配置失败: " + err.Error())
+	} else if userCfg != nil {
+		userBarks = userCfg.ActiveBarks()
+	}
+
+	// 合并并去重 Bark (相同 endpoint + key 仅发一次，项目级配置优先保留)
+	seen := make(map[string]bool)
+	var targets []config.UserBark
+	for _, b := range append(projectBarks, userBarks...) {
+		k := strings.ToLower(b.Endpoint()) + "/" + b.Key()
+		if !seen[k] {
+			seen[k] = true
+			targets = append(targets, b)
+		}
+	}
+
+	if len(targets) == 0 && len(projectWebhooks) == 0 {
+		return
+	}
+
+	title, body, groupSuffix, level := formatEvent(evt)
+
+	// 1. 发送 Bark 推送
+	sent := 0
+	for _, b := range targets {
+		if err := sendBark(b, title, body, groupSuffix, level); err != nil {
+			log.Warn("通知 " + b.Label() + " 发送失败: " + log.Redact(err.Error()))
+			continue
+		}
+		sent++
+	}
+	if sent > 0 {
+		actionLabel := "部署"
+		if evt.Kind == KindBackupSuccess || evt.Kind == KindBackupFailure {
+			actionLabel = "备份"
+		}
+		log.Info(fmt.Sprintf("已发送 %d 条%s通知", sent, actionLabel))
+	}
+
+	// 2. 发送项目专属 Webhook
+	if len(projectWebhooks) > 0 {
+		action := "deploy"
+		status := "success"
+		if evt.Kind == KindBackupSuccess || evt.Kind == KindBackupFailure {
+			action = "backup"
+		}
+		if evt.Kind == KindFailure || evt.Kind == KindBackupFailure {
+			status = "failure"
+		}
+		payload := WebhookPayload{
+			Event:     string(evt.Kind),
+			Action:    action,
+			Status:    status,
+			Project:   evt.Project,
+			Version:   evt.Version,
+			Type:      evt.Type,
+			Root:      evt.Root,
+			Elapsed:   evt.Elapsed,
+			Error:     evt.Error,
+			Timestamp: time.Now().Unix(),
+			Title:     title,
+			Body:      body,
+		}
+		hookSent := 0
+		for _, w := range projectWebhooks {
+			if err := sendWebhook(w, payload); err != nil {
+				log.Warn("Webhook " + log.Redact(w.URL) + " 推送失败: " + err.Error())
+				continue
+			}
+			hookSent++
+		}
+		if hookSent > 0 {
+			log.Info(fmt.Sprintf("已向 %d 个项目 Webhook 推送通知", hookSent))
+		}
+	}
+}
+
+func formatEvent(evt Event) (title, body, groupSuffix, level string) {
+	name := strings.TrimSpace(evt.Project)
+	if name == "" {
+		name = "upy"
+	}
+	ver := strings.TrimSpace(evt.Version)
+	if ver == "" {
+		ver = "未知版本"
+	}
+	kindLabel := deployKindLabel(evt.Type, evt.Mode)
+	lines := []string{
+		"项目: " + name,
+		"版本: " + ver,
+		"类型: " + kindLabel,
+		"目录: " + evt.Root,
+	}
+	if evt.Elapsed != "" {
+		lines = append(lines, "耗时: "+evt.Elapsed)
+	}
+	if evt.Kind == KindBackupSuccess {
+		lines := []string{
+			"项目: " + name,
+		}
+		if evt.Version != "" {
+			lines = append(lines, "归档: "+evt.Version)
+		}
+		if evt.Root != "" {
+			lines = append(lines, "目录: "+evt.Root)
+		}
+		if evt.Elapsed != "" {
+			lines = append(lines, "耗时: "+evt.Elapsed)
+		}
+		return "upy 备份成功 · " + name, nlJoin(lines), "backup", "active"
+	}
+	if evt.Kind == KindBackupFailure {
+		lines := []string{
+			"项目: " + name,
+			"目录: " + evt.Root,
+		}
+		if msg := strings.TrimSpace(evt.Error); msg != "" {
+			lines = append(lines, "原因: "+msg)
+		}
+		return "upy 备份失败 · " + name, nlJoin(lines), "backup_failure", "timeSensitive"
+	}
+
+	if evt.Kind == KindFailure {
+		if msg := strings.TrimSpace(evt.Error); msg != "" {
+			lines = append(lines, "原因: "+msg)
+		}
+		return "upy 部署失败 · " + name, nlJoin(lines), "failure", "timeSensitive"
+	}
+	return "upy 部署成功 · " + name, nlJoin(lines), "success", "active"
+}
+
+func deployKindLabel(typ, mode string) string {
+	switch typ {
+	case "static":
+		return "静态站点"
+	case "docker":
+		if mode == "compose" {
+			return "Docker Compose 集成项目"
+		}
+		return "Docker 容器"
+	case "system":
+		return "Systemd 系统服务"
+	default:
+		if typ == "" {
+			return "未知"
+		}
+		return typ
+	}
+}
+
+type barkPayload struct {
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	Group     string `json:"group,omitempty"`
+	Sound     string `json:"sound,omitempty"`
+	Icon      string `json:"icon,omitempty"`
+	Level     string `json:"level,omitempty"`
+	IsArchive string `json:"isArchive,omitempty"`
+}
+
+func sendBark(b config.UserBark, title, body, groupSuffix, defaultLevel string) error {
+	url := b.Endpoint() + "/" + b.Key()
+	group := strings.TrimSpace(b.Group)
+	if group == "" {
+		group = "upy." + groupSuffix
+	}
+	level := strings.TrimSpace(b.Level)
+	if level == "" {
+		level = defaultLevel
+	}
+	payload := barkPayload{
+		Title:     title,
+		Body:      body,
+		Group:     group,
+		Sound:     strings.TrimSpace(b.Sound),
+		Icon:      strings.TrimSpace(b.Icon),
+		Level:     level,
+		IsArchive: "1",
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("User-Agent", "upy-cli")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+func sendWebhook(w config.ProjectWebhook, payload WebhookPayload) error {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, w.URL, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("User-Agent", "upy-cli")
+	req.Header.Set("X-Upy-Event", payload.Event)
+	req.Header.Set("X-Upy-Delivery", fmt.Sprintf("%d", time.Now().UnixNano()))
+
+	if strings.TrimSpace(w.Secret) != "" {
+		mac := hmac.New(sha256.New, []byte(strings.TrimSpace(w.Secret)))
+		mac.Write(raw)
+		sig := hex.EncodeToString(mac.Sum(nil))
+		req.Header.Set("X-Upy-Signature", "sha256="+sig)
+	}
+
+	for k, v := range w.Headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
