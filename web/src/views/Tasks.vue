@@ -43,8 +43,8 @@ onUnmounted(() => clearInterval(timer))
 <template>
   <div class="page-heading">
     <div>
-      <span class="eyebrow">ACTIVITY & LOGS</span>
-      <h1>任务记录<span class="heading-dot">.</span></h1>
+      <span class="eyebrow">发布与维护</span>
+      <h1>任务记录</h1>
       <p>追踪每一次部署、回退、备份和清理。展示最近 200 条任务。</p>
     </div>
     <a-button @click="load"

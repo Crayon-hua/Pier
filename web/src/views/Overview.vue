@@ -60,9 +60,9 @@ function openLog(id: string) {
 <template>
   <div class="page-heading">
     <div>
-      <span class="eyebrow">WORKSPACE OVERVIEW</span>
-      <h1>部署，一目了然<span class="heading-dot">.</span></h1>
-      <p>你的应用、发布动态和服务器空间，都在这里。</p>
+      <span class="eyebrow">部署工作台</span>
+      <h1>应用部署概览</h1>
+      <p>查看应用版本、发布任务与本机空间占用</p>
     </div>
     <a-button type="primary" size="large" @click="create = true"
       ><template #icon><icon-plus /></template>新建项目</a-button
@@ -73,24 +73,24 @@ function openLog(id: string) {
   >
   <div class="stats-grid">
     <div class="stat-card">
-      <span class="stat-label">全部项目 <icon-folder /></span>
+      <span class="stat-label">全部项目</span>
       <div class="stat-number">{{ projects.length }}<small>个</small></div>
-      <span class="stat-foot">独立管理，统一发布</span>
+      <span class="stat-foot">本机登记的应用</span>
     </div>
     <div class="stat-card">
-      <span class="stat-label">已部署项目 <icon-check-circle /></span>
+      <span class="stat-label">已部署项目</span>
       <div class="stat-number">
         {{ deployed }}<small>/ {{ projects.length }}</small>
       </div>
-      <span class="stat-foot"><i class="tiny-dot green"></i> 按本机部署状态统计</span>
+      <span class="stat-foot"><i class="tiny-dot green"></i> 成功发布记录</span>
     </div>
     <div class="stat-card">
-      <span class="stat-label">执行中任务 <icon-sync /></span>
+      <span class="stat-label">执行中任务</span>
       <div class="stat-number">{{ running }}<small>个</small></div>
       <span class="stat-foot">{{ running ? '发布正在进行' : '当前没有进行中的任务' }}</span>
     </div>
     <div class="stat-card">
-      <span class="stat-label">项目空间占用 <icon-storage /></span>
+      <span class="stat-label">项目空间占用</span>
       <div class="stat-number disk-number">{{ bytes(disk) }}</div>
       <span class="stat-foot">版本、缓存和备份</span>
     </div>
@@ -99,15 +99,15 @@ function openLog(id: string) {
     <section class="panel">
       <div class="panel-header">
         <h3>
-          我的项目 <span class="count">{{ projects.length }}</span>
+          项目版本 <span class="count">{{ projects.length }}</span>
         </h3>
         <router-link to="/projects" class="text-link">全部项目 <icon-arrow-right /></router-link>
       </div>
       <a-spin :loading="loading" class="full-width"
         ><div v-if="!projects.length" class="empty-state">
           <span class="empty-icon"><icon-folder-add /></span>
-          <h3>为第一个应用搭座栈桥</h3>
-          <p>添加项目，从 GitHub Release 或本地包开始发布。</p>
+          <h3>添加第一个应用</h3>
+          <p>从 GitHub Release 或本地部署包开始</p>
           <a-button type="primary" @click="create = true">创建项目</a-button>
         </div>
         <div v-else class="project-list">
@@ -143,10 +143,12 @@ function openLog(id: string) {
     <section class="panel host-panel">
       <div class="panel-header">
         <h3>当前主机</h3>
-        <a-tag size="small" color="arcoblue">LOCAL</a-tag>
+        <span class="host-local">本机</span>
       </div>
-      <div class="host-illustration"><icon-desktop /><span class="connection-dot"></span></div>
-      <h3>本地工作节点</h3>
+      <div class="host-illustration" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+      <h3>单机工作节点</h3>
       <p class="muted">{{ system ? `${system.os} / ${system.arch}` : '正在连接…' }}</p>
       <div class="host-facts">
         <span>运行模式<strong>单机部署</strong></span
@@ -154,7 +156,9 @@ function openLog(id: string) {
           >控制台版本<strong>v{{ system?.version || '0.1.0' }}</strong></span
         ><span>部署引擎<strong>upy core</strong></span>
       </div>
-      <div class="host-note"><icon-info-circle /> 已部署表示发布记录成功，不代表实时健康状态。</div>
+      <div class="host-note">
+        <icon-info-circle /><span>已部署表示发布记录成功<br />不代表实时健康状态</span>
+      </div>
     </section>
   </div>
   <section class="panel">

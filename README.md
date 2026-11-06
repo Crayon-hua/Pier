@@ -4,6 +4,14 @@
 
 第一版面向一台服务器上的多个应用。项目独立构建，不依赖原 upy 源码目录，也不需要安装 upy。参考 perf-server 的 `server/ + web/` 组织方式，保留分层结构，省去 Redis、外部数据库、RBAC 和第三方登录。
 
+## 界面与介绍视频
+
+![Pier 部署概览](docs/media/pier-overview.png)
+
+[30 秒产品介绍](docs/media/pier-intro.mp4) · [界面优化过程](docs/media/pier-refinement.mp4) · [设计与验证说明](docs/ui-refinement.md)
+
+视频与截图中的项目、版本和任务是演示数据，运行中的控制台仍使用真实 API 数据。
+
 ## 功能
 
 | 功能 | 实现 |

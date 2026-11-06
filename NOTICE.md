@@ -11,3 +11,8 @@
 - Pier 的认证、项目、任务、HTTP API、持久化与 Vue 控制台为新增实现。
 
 本次输入的源码根目录没有独立 LICENSE 文件。本文只记录代码来源，不替原作者授予或更改许可证；对外再分发时应核对上游实际许可证和依赖许可。
+
+
+## 界面优化工作流与演示视频
+
+界面审查及演示视频流程采用并改编自 [unslop](https://github.com/heydamir/unslop)，由 [Damir Sokolovsky (@heydamir)](https://x.com/heydamir) 创建，依据 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 使用。演示视频保留作者署名。此项来源说明不改变 Pier 自有代码及其他依赖的授权。

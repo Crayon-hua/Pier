@@ -27,8 +27,8 @@ async function signOut() {
         ><span class="brand-symbol">P<span></span></span
         ><span>Pier <small>栈桥</small></span></router-link
       >
-      <div class="workspace-label">WORKSPACE <span>单机</span></div>
-      <a-menu :selected-keys="[selected]" @menu-item-click="navigate">
+      <div class="workspace-label">工作空间 <span>单机</span></div>
+      <a-menu aria-label="主导航" :selected-keys="[selected]" @menu-item-click="navigate">
         <a-menu-item key="/"
           ><template #icon><icon-apps /></template>概览</a-menu-item
         >
@@ -52,7 +52,7 @@ async function signOut() {
           工作空间 <icon-right /> <span>{{ route.meta.title }}</span>
         </div>
         <div class="topbar-right">
-          <a-tag size="small" color="gray">LOCAL</a-tag
+          <span class="local-label"><icon-desktop /> 本机</span
           ><span class="avatar">{{ auth.username.slice(0, 1).toUpperCase() }}</span
           ><span>{{ auth.username }}</span
           ><a-button type="text" size="small" aria-label="退出登录" @click="signOut"
@@ -61,7 +61,7 @@ async function signOut() {
         </div>
       </header>
       <main class="page"><router-view /></main>
-      <footer class="page-footer">Pier 栈桥 <span>让每一次发布，稳稳靠岸。</span></footer>
+      <footer class="page-footer">Pier 栈桥 <span>单机应用部署控制台</span></footer>
     </div>
   </div>
 </template>

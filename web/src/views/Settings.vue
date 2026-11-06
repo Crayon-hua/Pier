@@ -37,8 +37,8 @@ async function save() {
 <template>
   <div class="page-heading">
     <div>
-      <span class="eyebrow">WORKSPACE SETTINGS</span>
-      <h1>设置<span class="heading-dot">.</span></h1>
+      <span class="eyebrow">工作空间</span>
+      <h1>设置</h1>
       <p>管理你的登录凭据，查看工作空间运行信息。</p>
     </div>
   </div>

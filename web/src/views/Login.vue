@@ -58,25 +58,44 @@ async function submit() {
         <span class="brand-symbol">P<span></span></span><span>Pier <small>栈桥</small></span>
       </div>
       <div class="story-content">
-        <span class="eyebrow">SMALL TOOL. STEADY SHIP.</span>
-        <h1>从构建完成，<br />到安心上线。</h1>
-        <p>把发布、版本与日常维护放在一起。<br />一个清晰的工作台，管理你的单机应用。</p>
-        <div class="pier-art" aria-hidden="true">
-          <div class="art-track"></div>
-          <div class="art-block block-one">01<span>PREPARE</span></div>
-          <div class="art-block block-two">02<span>DEPLOY</span></div>
-          <div class="art-block block-three">03<span>VERIFY</span></div>
-          <div class="art-water"></div>
+        <span class="eyebrow">单机应用部署控制台</span>
+        <h1>每次发布，<br />都有据可循</h1>
+        <p>
+          从部署包到运行版本，把应用发布、版本回退<br
+            class="desktop-break"
+          />与日常维护放在同一个工作台
+        </p>
+        <div class="deploy-route" aria-label="发布流程：部署包、发布、健康检查">
+          <div class="route-caption">
+            <span>一次发布的路径</span><span class="mono">Pier / deploy</span>
+          </div>
+          <ol>
+            <li>
+              <span class="route-number">01</span
+              ><span><strong>选择部署包</strong><small>GitHub Release / 本地上传</small></span
+              ><icon-file />
+            </li>
+            <li>
+              <span class="route-number">02</span
+              ><span><strong>发布到应用</strong><small>静态站点 / Docker / 系统服务</small></span
+              ><icon-send />
+            </li>
+            <li>
+              <span class="route-number">03</span
+              ><span><strong>检查与回退</strong><small>健康检查失败时自动尝试回滚</small></span
+              ><icon-check-circle />
+            </li>
+          </ol>
         </div>
       </div>
-      <div class="story-footer">轻量部署 · 从容运维</div>
+      <div class="story-footer">一个工作台 · 一台服务器 · 多个应用</div>
     </section>
     <section class="login-form-side">
       <div class="login-form">
-        <span class="eyebrow">YOUR DEPLOYMENT WORKSPACE</span>
-        <h2>{{ initialized ? '欢迎回来' : '创建你的工作空间' }}</h2>
+        <span class="eyebrow">Pier 工作空间</span>
+        <h2>{{ initialized ? '登录工作台' : '创建你的工作空间' }}</h2>
         <p class="muted">
-          {{ initialized ? '登录 Pier，继续管理你的应用。' : '首次使用，设置管理员用户名和密码。' }}
+          {{ initialized ? '使用管理员账户继续管理应用' : '首次使用，设置管理员用户名和密码' }}
         </p>
         <a-alert v-if="error" type="error" class="mb16">{{ error }}</a-alert>
         <a-form v-if="ready" :model="form" layout="vertical" @submit-success="submit"

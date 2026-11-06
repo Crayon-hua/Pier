@@ -31,8 +31,8 @@ onMounted(load)
 <template>
   <div class="page-heading">
     <div>
-      <span class="eyebrow">YOUR APPLICATIONS</span>
-      <h1>项目<span class="heading-dot">.</span></h1>
+      <span class="eyebrow">应用管理</span>
+      <h1>项目</h1>
       <p>每个应用一个独立空间，让版本和数据各归其位。</p>
     </div>
     <a-button type="primary" size="large" @click="create = true"
